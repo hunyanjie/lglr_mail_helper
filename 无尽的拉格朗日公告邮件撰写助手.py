@@ -20,7 +20,7 @@ class ColorText(tk.Text):
     def __init__(self, master, **kw):
         super().__init__(master, wrap='char', undo=True, insertbackground=THEME['insert'], **kw)
         self.bind('<Button-3>', self._on_right)
-        self.bind('<KeyRelease>', self._on_key)
+        self.bind('<KeyRelease>', self._on_key_smart)
         self._tag_coords = 'coords'          # 坐标高亮专用 tag
         self.tag_config(self._tag_coords, foreground='#278451')
 
@@ -42,8 +42,11 @@ class ColorText(tk.Text):
         self.tag_add(tag, start, end)
 
     # ---- 增量坐标高亮 ----
-    def _on_key(self, _=None):
-        # 防抖 200 ms
+    def _on_key_smart(self, event):
+        # 控制键（Ctrl/Alt/Shift）组合不改变内容，直接返回
+        if event.state & 0x0004:  # Ctrl 按下
+            return
+        # 其余逻辑不变
         if hasattr(self, '_after'):
             self.after_cancel(self._after)
         self._after = self.after(200, self._highlight_coords)
@@ -195,7 +198,7 @@ class App(tk.Tk):
         # 输出区
         frm2 = tk.Frame(self, bg=THEME['bg'])
         frm2.pack(fill='both', expand=True, padx=5, pady=5)
-        self.output = tk.Text(frm2, wrap='char', bg=THEME['bg'], fg=THEME['fg'], insertbackground=THEME['insert'], font=self.font, width=70, height=10)
+        self.output = tk.Text(frm2, wrap='char', bg=THEME['bg'], fg=THEME['fg'], insertbackground=THEME['insert'], font=self.font, width=70, height=10, undo=True)
         scroll2 = tk.Scrollbar(frm2, orient='vertical', command=self.output.yview)
         self.output.config(yscrollcommand=scroll2.set)
         self.output.pack(side='left', fill='both', expand=True)
@@ -207,12 +210,19 @@ class App(tk.Tk):
         self.status = tk.Label(self, text='文本长度：0/300', bg=THEME['bg'], fg=THEME['fg'])
         self.status.pack(fill='x')
 
+        # 提示栏
+        self.hint = tk.Label(self, text='提示：\n1、上方文本框为彩色效果预览框，下方文本框可输出直接在邮件中使用的内容的输出框（兼原始内容输入框）\n2、在上部分文本框中框选字符后按右键打开颜色选择面板\n3、可使用 “Ctrl-Z” 撤回以及 “Ctrl-Y” 重做', bg=THEME['bg'], fg=THEME['fg'], justify='left')
+        self.hint.pack(fill='x')
         # 输出区右键菜单
         self.menu = Menu(self, tearoff=0)
         self.menu.add_command(label='全部复制', command=self.copy_output)
         self.menu.add_command(label='粘贴', command=lambda: self.output.event_generate('<<Paste>>'))
         self.menu.add_command(label='覆盖粘贴', command=self.paste_overwrite)  # ←新增
         self.output.bind('<Button-3>', lambda e: self.menu.post(e.x_root, e.y_root))
+
+        for txt in (self.input, self.output):
+            txt.bind('<Control-y>', lambda e: e.widget.edit_redo())
+            txt.bind('<Control-z>', lambda e: e.widget.edit_undo())
 
     # ---- 事件 ----
     def on_export(self):
