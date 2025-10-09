@@ -1,8 +1,6 @@
 import tkinter as tk
 from tkinter import colorchooser, font, Menu, messagebox
 import re
-import threading
-import time
 
 THEME = dict(bg='#0E0E0E', fg='#FFFFFF', insert='#FFFFFF', warn='#FF0000')
 
@@ -67,31 +65,47 @@ class ColorText(tk.Text):
             idx = end
         return out
 
-    # ---- 导出 Lagrange ----
+    def _global_idx(self, line_str, char_pos):
+        """把行内偏移转成全局偏移"""
+        row = self.get('1.0', 'end').splitlines().index(line_str.rstrip('\n')) + 1
+        return int(self.index(f'{row}.0').split('.')[1]) + char_pos
+
+    # ---------- 导出 & 导入 ----------
     def export_lagrange(self) -> str:
-        """按拉格朗日协议导出：#r=换行，#cRRGGBB=改色，#n=强制重置为默认色"""
-        out, cur_color = [], None
-        # 逐字符扫描，先拿到全局索引
+        out, last_real_color, last_show_color = [], None, None  # last_real_color 记录上一次“非#l”的真实色
+        color_change_count = 0
         all_text = self.get('1.0', 'end-1c')
         for global_idx, ch in enumerate(all_text):
-            # 当前字符的 Text 索引
             tk_idx = f'1.0+{global_idx}c'
-            # 取颜色
             tags = [t for t in self.tag_names(tk_idx) if t.startswith('c_')]
             color = tag_to_rgb(tags[0]) if tags else '#FFFFFF'
 
-            # 换行
             if ch == '\n':
                 out.append('#r')
                 continue
 
-            # 颜色变化才输出控制符
-            if color != cur_color:
-                if color == '#FFFFFF':  # 回到默认色
-                    out.append('#n')
-                else:  # 新颜色
-                    out.append('#c' + color[1:].upper())
-                cur_color = color
+            if not out:
+                last_show_color = color
+                last_real_color = color
+
+            # 颜色变化
+            if color != last_real_color:
+                if color == '#FFFFFF':
+                    if last_real_color:
+                        out.append('#n')  # 显式回到默认
+                else:
+                    if last_show_color == color:
+                        out.append('#l')  # 简写
+                        last_show_color = last_real_color
+                    else:
+                        out.append('#c' + color[1:].upper())
+                if color_change_count == 1:
+                    last_show_color = last_real_color
+                    color_change_count = 0
+                elif last_show_color:
+                    color_change_count += 1
+                last_real_color = color
+            # 若颜色没变，则什么都不输出
 
             out.append(ch)
 
@@ -100,57 +114,59 @@ class ColorText(tk.Text):
             out.pop()
         return ''.join(out)
 
-    def _global_idx(self, line_str, char_pos):
-        """把行内偏移转成全局偏移"""
-        row = self.get('1.0', 'end').splitlines().index(line_str.rstrip('\n')) + 1
-        return int(self.index(f'{row}.0').split('.')[1]) + char_pos
-
-    # ---- 导入 Lagrange ----
     def import_lagrange(self, txt: str):
-        """把 Lagrange 字符串还原成带颜色 Text"""
         self.delete('1.0', 'end')
-
-        # 1. 先插入纯文本（去掉所有控制符）
-        plain = re.sub(r'#c[0-9A-Fa-f]{6}|#n|#r', '', txt.replace('#r', '\n'))
+        # 1. 去掉所有控制符，得到纯文本
+        plain = re.sub(r'#c[0-9A-Fa-f]{6}|#l|#n|#r', '', txt.replace('#r', '\n'))
         self.insert('1.0', plain)
 
-        # 2. 再扫描一次，给对应区间上色
-        pos_in_lag = 0  # 在 Lagrange 串里的指针
-        pos_in_plain = 0  # 在 plain 里的指针
-        cur_color = None
-        tag_start = None  # 当前颜色块起始（plain 坐标）
+        pos_lag   = 0
+        pos_plain = 0
+        last_show_color = None   # 上一个「显示出来的」颜色（用于 #l）
+        cur_color       = '#FFFFFF'   # 当前生效颜色
+        tag_start       = None   # 当前色块起始
 
-        def flush_color():
+        def flush():
             nonlocal tag_start, cur_color
             if tag_start is not None and cur_color and cur_color != '#FFFFFF':
-                tk_start = f'1.0+{tag_start}c'
-                tk_end = f'1.0+{pos_in_plain}c'
+                tk_s = f'1.0+{tag_start}c'
+                tk_e = f'1.0+{pos_plain}c'
                 tag = rgb_to_tag(cur_color)
                 self.tag_config(tag, foreground=cur_color)
-                self.tag_add(tag, tk_start, tk_end)
+                self.tag_add(tag, tk_s, tk_e)
             tag_start = None
 
-        while pos_in_lag < len(txt):
-            if txt.startswith('#r', pos_in_lag):
-                pos_in_lag += 2
-                pos_in_plain += 1  # 对应 \n
-            elif txt.startswith('#n', pos_in_lag):
-                flush_color()
-                cur_color = None
-                pos_in_lag += 2
-            elif txt.startswith('#c', pos_in_lag) and len(txt) >= pos_in_lag + 9:
-                new_color = '#' + txt[pos_in_lag + 3:pos_in_lag + 9].upper()
-                flush_color()
+        while pos_lag < len(txt):
+            if txt.startswith('#r', pos_lag):
+                flush()
+                pos_lag += 2
+                pos_plain += 1          # 对应 \n
+            elif txt.startswith('#n', pos_lag):
+                flush()
+                last_show_color = cur_color
+                cur_color = '#FFFFFF'
+                pos_lag += 2
+            elif txt.startswith('#c', pos_lag) and len(txt) >= pos_lag + 8:
+                new_color = '#' + txt[pos_lag + 2 : pos_lag + 8].upper()
+                flush()
+                # 更新「显示颜色」并生效
+                last_show_color = cur_color
                 cur_color = new_color
-                tag_start = pos_in_plain
-                pos_in_lag += 9
-            else:  # 普通字符
+                tag_start = pos_plain
+                pos_lag += 8
+            elif txt.startswith('#l', pos_lag):
+                flush()
+                # #l 复用「上次显示色」
+                cur_color, last_show_color = last_show_color, cur_color
+                tag_start = pos_plain
+                pos_lag += 2
+            else:                       # 普通字符
                 if cur_color and tag_start is None:
-                    tag_start = pos_in_plain
-                pos_in_lag += 1
-                pos_in_plain += 1
+                    tag_start = pos_plain
+                pos_lag += 1
+                pos_plain += 1
 
-        flush_color()  # 收尾
+        flush()
         self._highlight_coords()
 
 # ---------- UI ----------
@@ -179,7 +195,7 @@ class App(tk.Tk):
         # 输出区
         frm2 = tk.Frame(self, bg=THEME['bg'])
         frm2.pack(fill='both', expand=True, padx=5, pady=5)
-        self.output = tk.Text(frm2, wrap='char', bg=THEME['bg'], fg=THEME['fg'], font=self.font, width=70, height=10)
+        self.output = tk.Text(frm2, wrap='char', bg=THEME['bg'], fg=THEME['fg'], insertbackground=THEME['insert'], font=self.font, width=70, height=10)
         scroll2 = tk.Scrollbar(frm2, orient='vertical', command=self.output.yview)
         self.output.config(yscrollcommand=scroll2.set)
         self.output.pack(side='left', fill='both', expand=True)
@@ -195,6 +211,7 @@ class App(tk.Tk):
         self.menu = Menu(self, tearoff=0)
         self.menu.add_command(label='全部复制', command=self.copy_output)
         self.menu.add_command(label='粘贴', command=lambda: self.output.event_generate('<<Paste>>'))
+        self.menu.add_command(label='覆盖粘贴', command=self.paste_overwrite)  # ←新增
         self.output.bind('<Button-3>', lambda e: self.menu.post(e.x_root, e.y_root))
 
     # ---- 事件 ----
@@ -221,6 +238,16 @@ class App(tk.Tk):
         self.output.tag_add('sel', '1.0', 'end')
         self.output.event_generate('<<Copy>>')
         self.output.tag_remove('sel', '1.0', 'end')
+
+    def paste_overwrite(self):
+        """清空输出区 → 粘贴剪贴板"""
+        try:
+            self.output.delete('1.0', 'end')  # 清空
+            self.output.event_generate('<<Paste>>')  # 再粘贴
+            self.on_len()  # 同步字数
+        except tk.TclError:
+            # 剪贴板无内容时忽略
+            pass
 
 if __name__ == '__main__':
     App().mainloop()
