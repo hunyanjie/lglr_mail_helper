@@ -1,8 +1,16 @@
 import tkinter as tk
 from tkinter import colorchooser, font, Menu, messagebox
 import re
+from typing import Dict
 
 THEME = dict(bg='#0E0E0E', fg='#FFFFFF', insert='#FFFFFF', warn='#FF0000')
+
+SHORTCUT_MAP: dict[str, str] = {
+    '#c0000FF': '#B', '#cFFD700': '#D', '#c00FF00': '#G',
+    '#c000000': '#K', '#cFFA500': '#O', '#cFFC0CB': '#P',
+    '#cFF0000': '#R', '#c800080': '#U', '#cFFFFFF': '#W',
+    '#cFFFF00': '#Y'
+}
 
 # ---------- 工具 ----------
 def rgb_to_tag(c: str) -> str:          # #12AB34 -> c_12AB34
@@ -16,6 +24,7 @@ def coords_in(text: str):
 
 # ---------- 核心 ----------
 class ColorText(tk.Text):
+    DEFAULT_N_COLOR = '#C0BDBA'  # 拉格朗日 #n 后的实际默认色
     """带颜色标记的 Text，支持导出/导入 Lagrange 格式"""
     def __init__(self, master, **kw):
         super().__init__(master, wrap='char', undo=True, insertbackground=THEME['insert'], **kw)
@@ -55,6 +64,8 @@ class ColorText(tk.Text):
         self.tag_remove(self._tag_coords, '1.0', 'end')
         for s, e in self._scan_re(r'\(\d+,\d+\)'):
             self.tag_add(self._tag_coords, s, e)
+            # 确保坐标颜色永远在最上层
+            self.tag_raise(self._tag_coords)
 
     def _scan_re(self, pattern):
         """返回 (start_index, end_index) 列表"""
@@ -90,6 +101,9 @@ class ColorText(tk.Text):
             if not out:
                 last_show_color = color
                 last_real_color = color
+                if color != '#FFFFFF':
+                    out.append('#c' + color[1:].upper())
+
 
             # 颜色变化
             if color != last_real_color:
@@ -115,10 +129,20 @@ class ColorText(tk.Text):
         # 清理尾部无用控制符
         while out and out[-1] in ('#n', '#r'):
             out.pop()
-        return ''.join(out)
+        out_str = ''.join(out)
+        out_str = out_str.replace('#c' + self.DEFAULT_N_COLOR[1:].upper(), '#n')
+        for long, short in SHORTCUT_MAP.items():
+            out_str = out_str.replace(long, short)
+
+        return out_str
 
     def import_lagrange(self, txt: str):
         self.delete('1.0', 'end')
+        # 逆向还原单字母 → 6 位码
+        reverse_map = {v: k for k, v in SHORTCUT_MAP.items()}
+        for short, long in reverse_map.items():
+            txt = txt.replace(short, long)
+        txt = txt.replace('#n', '#cC0BDBA')
         # 1. 去掉所有控制符，得到纯文本
         plain = re.sub(r'#c[0-9A-Fa-f]{6}|#l|#n|#r', '', txt.replace('#r', '\n'))
         self.insert('1.0', plain)
@@ -176,7 +200,7 @@ class ColorText(tk.Text):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('无尽的拉格朗日多色文本编辑器 v3.0 | 制作者：魂魇桀（梦岛）')
+        self.title('无尽的拉格朗日多色文本编辑器 v3.1 | 制作者：魂魇桀（梦岛）')
         self.configure(bg=THEME['bg'])
         self.font = font.Font(family='等线', size=14)
 
