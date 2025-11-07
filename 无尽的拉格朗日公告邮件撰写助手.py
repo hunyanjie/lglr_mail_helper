@@ -109,13 +109,17 @@ class ColorText(tk.Text):
             if color != last_real_color:
                 if color == '#FFFFFF':
                     if last_real_color:
-                        out.append('#n')  # 显式回到默认
+                        if last_show_color == '#FFFFFF':
+                            out.append('#l')
+                        else:
+                            out.append('#W')  # 显式回到默认
                 else:
                     if last_show_color == color:
                         out.append('#l')  # 简写
                         last_show_color = last_real_color
                     else:
                         out.append('#c' + color[1:].upper())
+                        last_show_color = last_real_color
                 if color_change_count == 1:
                     last_show_color = last_real_color
                     color_change_count = 0
@@ -200,7 +204,7 @@ class ColorText(tk.Text):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('无尽的拉格朗日多色文本编辑器 v3.1 | 制作者：魂魇桀（梦岛）')
+        self.title('无尽的拉格朗日多色文本编辑器 v3.2 | 制作者：魂魇桀（梦岛）')
         self.configure(bg=THEME['bg'])
         self.font = font.Font(family='等线', size=14)
 
